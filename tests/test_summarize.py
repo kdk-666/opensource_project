@@ -139,3 +139,39 @@ def test_one_failure_does_not_stop_others(tmp_path, monkeypatch):
     c = FakeClient(["bad", "bad", "bad", GOOD])
     out = summarize_all([event(1), event(2)], client=c, model="m")
     assert [s.status for s in out] == ["failed", "ok"]
+
+
+class MetricsClient(FakeClient):
+    """Ollama처럼 통계값(토큰 수, 시간)이 붙은 응답을 돌려준다."""
+
+    def chat(self, **kw):
+        r = super().chat(**kw)
+        r.update(prompt_eval_count=1234, eval_count=210, load_duration=2_500_000_000)
+        return r
+
+
+def test_timing_and_token_metrics_recorded():
+    s = summarize_event(event(), MetricsClient([GOOD]), "m", PROMPT)
+    assert s.attempts == 1 and s.elapsed_sec >= 0
+    assert s.prompt_tokens == 1234 and s.output_tokens == 210 and s.load_sec == 2.5
+
+
+def test_timing_without_metrics_does_not_crash():
+    s = summarize_event(event(), FakeClient([GOOD]), "m", PROMPT)
+    assert s.prompt_tokens is None and s.load_sec is None and s.elapsed_sec >= 0
+
+
+def test_timing_counts_retries_and_failures():
+    s = summarize_event(event(), FakeClient(["x", "y", "z"]), "m", PROMPT, retries=2)
+    assert s.status == "failed" and s.attempts == 3 and s.elapsed_sec >= 0
+    s = summarize_event(event(), FakeClient(["x", GOOD]), "m", PROMPT)
+    assert s.status == "ok" and s.attempts == 2
+
+
+def test_cli_timing_line():
+    from newscard.cli import _timing_line
+
+    ok = summarize_event(event(), MetricsClient([GOOD]), "m", PROMPT)
+    line = _timing_line([ok], 12.34)
+    assert "전체 12.3초" in line and "성공 1/1건" in line and "모델 로딩 최대 2.5초" in line
+    assert "성공한 요약 없음" in _timing_line([], 1.0)

@@ -3,6 +3,7 @@ JSON 형식이 틀리면 다시 시도한다. 한 사건이 실패해도 나머�
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -85,6 +86,14 @@ def make_client():
     return ollama.Client(host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"), timeout=300)
 
 
+def _metric(resp, key):
+    """Ollama 응답에서 통계값을 꺼낸다. 없으면 None."""
+    try:
+        return resp.get(key)
+    except Exception:
+        return None
+
+
 def summarize_event(event: TopEvent, client, model: str, prompt: str, retries: int = 2) -> EventSummary:
     material, basis, truncated = build_material(event)
     used, _ = choose_article(event)  # 요약에 실제로 쓴 기사
@@ -107,7 +116,9 @@ def summarize_event(event: TopEvent, client, model: str, prompt: str, retries: i
     message = prompt.replace("{material}", material)
     num_ctx = pick_num_ctx(len(message))
     last_error = ""
+    started = time.perf_counter()
     for attempt in range(1, retries + 2):
+        result.attempts = attempt
         try:
             resp = client.chat(
                 model=model,
@@ -126,8 +137,17 @@ def summarize_event(event: TopEvent, client, model: str, prompt: str, retries: i
             continue
         result.headline, result.summary = out.headline, out.summary
         result.key_points = [p.strip() for p in out.key_points if p.strip()][:3]
+        result.prompt_tokens = _metric(resp, "prompt_eval_count")
+        result.output_tokens = _metric(resp, "eval_count")
+        load = _metric(resp, "load_duration")
+        result.load_sec = round(load / 1e9, 2) if isinstance(load, (int, float)) else None
+        result.elapsed_sec = round(time.perf_counter() - started, 2)
+        log.info("[%d위] 요약 완료 %.1f초 (입력 %s토큰, 출력 %s토큰, 시도 %d회)",
+                 event.rank, result.elapsed_sec, result.prompt_tokens, result.output_tokens, attempt)
         return result
     result.status, result.error = "failed", last_error
+    result.elapsed_sec = round(time.perf_counter() - started, 2)
+    log.warning("[%d위] 요약 실패 %.1f초 (시도 %d회)", event.rank, result.elapsed_sec, result.attempts)
     return result
 
 

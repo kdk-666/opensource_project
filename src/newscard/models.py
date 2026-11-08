@@ -76,3 +76,55 @@ class EventSummary(BaseModel):
     model: str = ""
     status: str = "ok"  # ok | failed
     error: str = ""
+    elapsed_sec: float = 0.0  # 이 사건 요약에 걸린 전체 시간 (재시도 포함)
+    attempts: int = 0  # 모델 호출 횟수
+    prompt_tokens: int | None = None  # Ollama가 알려준 입력 토큰 수 (성공한 호출 기준)
+    output_tokens: int | None = None  # Ollama가 알려준 출력 토큰 수
+    load_sec: float | None = None  # 모델을 메모리에 올리는 데 걸린 시간 (처음 한 번만 큼)
+
+
+class ScriptCard(BaseModel):
+    """카드뉴스 한 장 + 그 장의 나레이션. 카드 이미지(Pillow)와 음성(Piper) 단계가 이 파일을 읽는다."""
+
+    index: int  # 영상 안에서의 순서 (0부터)
+    kind: str  # intro | news | outro
+    rank: int = 0  # news일 때 Top 순위
+    title: str  # 카드 제목
+    bullets: list[str] = Field(default_factory=list)  # 카드에 보여줄 짧은 줄
+    narration: str  # 음성으로 읽을 문장
+    est_sec: float = 0.0  # 나레이션 예상 길이(초). 실제 음성 길이가 아닌 글자 수 기반 추정
+    source_line: str = ""  # 카드 하단 출처 표기
+    basis: str = ""  # 요약 근거 (body | body_fallback | title_only), news일 때
+    generated_by: str = "template"  # llm | fallback(모델 실패 시 요약문으로 대체) | template
+    model: str = ""
+    elapsed_sec: float = 0.0
+    attempts: int = 0
+    error: str = ""
+
+
+class VerifyResult(BaseModel):
+    """요약 검토 결과. summaries.json은 건드리지 않고 data/verification.json에 따로 저장한다."""
+
+    rank: int
+    headline: str = ""
+    status: str  # pass(문제 없음) | warn(근거 확인 불충분, 검토 권장) | flag(근거 없는 내용 의심, 검토 필요) | skipped
+    rule_issues: list[str] = Field(default_factory=list)  # 코드 검사: 본문에 없는 숫자/인용문/영문 이름
+    claims: list[dict] = Field(default_factory=list)  # LLM 검토: [{text, supported, evidence, verdict}]
+    llm_status: str = "not_run"  # ok | failed | skipped | not_run
+    basis: str = ""  # 요약 근거 (body | body_fallback | title_only)
+    model: str = ""
+    elapsed_sec: float = 0.0
+    attempts: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class ScriptCheck(BaseModel):
+    """대본 카드 한 장의 코드 검사 결과. data/script_check.json에 저장한다."""
+
+    index: int
+    kind: str  # intro | news | outro
+    rank: int = 0
+    status: str  # pass | warn | flag
+    issues: list[str] = Field(default_factory=list)  # 고쳐야 할 문제 (flag)
+    warnings: list[str] = Field(default_factory=list)  # 확인하면 좋은 점 (warn)
+    est_sec: float = 0.0
