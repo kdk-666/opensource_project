@@ -108,6 +108,24 @@ def cmd_verify() -> None:
     print(f"\n{mode} | 전체 {time.perf_counter() - t0:.2f}초")
 
 
+def cmd_cards() -> None:
+    from newscard import cards
+
+    arg = sys.argv[2] if len(sys.argv) > 2 else "both"
+    if arg not in ("both", "light", "dark"):
+        raise SystemExit("사용법: newscard cards [light|dark|both]  (기본: both)")
+    themes = ("light", "dark") if arg == "both" else (arg,)
+    t0 = time.perf_counter()
+    result = cards.run(themes=themes)
+    for theme, manifest in result.items():
+        label = {"light": "밝은 모드", "dark": "다크 모드"}[theme]
+        print(f"\n[{label}] 카드 이미지 {len(manifest)}장 -> data/cards/{theme}/ ({manifest[0]['width']}x{manifest[0]['height']})")
+        for m in manifest:
+            warn = f"  ※ 글이 넘쳐 본문 {m['dropped_bullets']}줄을 뺌" if m["dropped_bullets"] else ""
+            print(f"  [{m['index']}] {m['image']}  | {m['title']}{warn}")
+    print(f"\n전체 {time.perf_counter() - t0:.1f}초 (목록: data/cards.json)")
+
+
 def _print_script_check() -> None:
     from newscard import script_check
 
@@ -141,7 +159,7 @@ def _timing_line(summaries, total):  # 맨 아래 소요 시간 요약
     return f"\n전체 {total:.1f}초 | 성공 {len(done)}/{len(summaries)}건 | 평균 {avg:.1f}초 | 가장 느린 것 {slow.rank}위 {slow.elapsed_sec:.1f}초{load}"
 
 
-COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify}
+COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards}
 
 
 def main() -> None:
