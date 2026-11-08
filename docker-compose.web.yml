@@ -1,0 +1,11 @@
+# 추가 웹 서비스. 기존 app/ollama 서비스나 데이터 볼륨은 변경하지 않습니다.
+services:
+  web:
+    build: .
+    command: ["python", "-m", "newscard.web_server", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${NEWSCARD_WEB_PORT:-8000}:8000"
+    volumes:
+      - ./src:/app/src:ro
+      - ./web:/app/web:ro
+      - ./data:/app/data:ro

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="생성한 뉴스 브리핑 영상을 로컬에서 보는 웹페이지">
+  <title>Daily Brief — 오늘을 읽는 가장 짧은 시간</title>
+  <link rel="icon" type="image/png" href="./assets/dark_navy_sample.png">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./script.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner container">
+      <a class="brand" href="#top" aria-label="Daily Brief 홈">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span>daily<span class="brand-dot">.</span>brief</span>
+      </a>
+      <nav class="navigation" aria-label="주요 메뉴">
+        <a href="#today" class="nav-active">오늘의 브리핑</a>
+        <a href="#mybriefing">나의 브리핑</a>
+      </nav>
+      <div class="header-actions">
+        <span class="preview-badge"><span></span> LOCAL BRIEFING</span>
+        <button class="theme-toggle" type="button" aria-label="다크 모드로 전환" aria-pressed="false" id="theme-toggle">
+          <svg class="moon-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19.25 15.25A8.2 8.2 0 0 1 8.75 4.75 8.25 8.25 0 1 0 19.25 15.25Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <svg class="sun-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3.8" stroke="currentColor" stroke-width="1.5"/><path d="M12 2.75v2M12 19.25v2M21.25 12h-2M4.75 12h-2M18.54 5.46l-1.42 1.42M6.88 17.12l-1.42 1.42M18.54 18.54l-1.42-1.42M6.88 6.88 5.46 5.46" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span id="theme-label">다크 모드</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero container" id="today" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="eyebrow-line"></span> YOUR DAILY NEWS BRIEF</p>
+        <h1 id="hero-title">오늘을 읽는<br>가장 <span>짧은 시간.</span></h1>
+        <p class="hero-description">하루의 흐름을 바꾸는 다섯 가지 뉴스.<br>복잡한 세상, 핵심부터 차분하게 만나보세요.</p>
+        <a class="outline-link" href="#mybriefing">나의 관심 주제 설정하기 <span aria-hidden="true">↗</span></a>
+        <div class="hero-note"><span class="note-icon" aria-hidden="true">✳</span><span>생성한 오늘의 브리핑을 로컬에서 확인하세요.<br>맞춤 태그의 뉴스 수집은 아직 연결되지 않았어요.</span></div>
+      </div>
+
+      <div class="feature-card" aria-label="오늘의 브리핑 영상">
+        <div class="feature-topline"><span><i></i> TODAY'S BRIEF</span><span>VOL. 01</span></div>
+        <div class="video-stage">
+          <div class="phone-frame">
+            <img id="poster" src="./assets/minimal_white_sample.png" alt="영상이 준비되지 않았을 때 보여주는 카드 이미지">
+            <video id="brief-video" controls playsinline preload="metadata" aria-label="오늘의 브리핑 영상" hidden></video>
+            <span class="poster-label" id="poster-label">영상 준비 중</span>
+          </div>
+        </div>
+        <div class="feature-bottom"><div><strong>오늘의 뉴스 TOP 5</strong><span id="video-detail" role="status" aria-live="polite">영상을 확인하고 있어요.</span></div><button type="button" id="video-refresh" class="video-status">영상 확인 ↻</button></div>
+      </div>
+
+      <aside class="side-note" aria-label="브리핑 안내">
+        <p class="side-kicker">A MOMENT<br>TO CATCH UP <span>↗</span></p>
+        <div class="side-line"></div>
+        <div class="side-stat"><strong>05</strong><span>오늘의 주요 뉴스</span></div>
+        <p>한 번의 브리핑으로<br>중요한 다섯 가지 이야기.</p>
+        <div class="side-bottom"><span>LOCAL NEWS CURATION</span><span>01 — 05</span></div>
+      </aside>
+    </section>
+
+    <section class="personal-section" id="mybriefing" aria-labelledby="personal-title">
+      <div class="container personal-inner">
+        <div class="personal-heading">
+          <div>
+            <p class="eyebrow"><span class="eyebrow-line"></span> CURATED FOR YOU</p>
+            <h2 id="personal-title">나의 브리핑<span class="section-dot">.</span></h2>
+            <p>관심 주제로 나만의 뉴스 브리핑을 준비해 보세요.</p>
+          </div>
+          <span class="personal-badge"><span></span> PERSONAL BRIEFING</span>
+        </div>
+        <div class="personal-grid">
+          <div class="interest-card">
+            <div class="card-heading"><div><span class="card-overline">01 / MY INTERESTS</span><h3>관심 태그</h3></div><span class="tag-count" id="tag-count">0 / 20</span></div>
+            <p class="card-intro">주제나 종목 코드를 직접 입력해 등록하세요.</p>
+            <form id="tag-form" class="tag-form" novalidate>
+              <label for="tag-input" class="field-label">키워드 또는 티커</label>
+              <div class="input-group"><span class="input-hash" aria-hidden="true">#</span><input id="tag-input" name="tag" type="text" maxlength="40" autocomplete="off" placeholder="예: 인공지능" aria-describedby="tag-help tag-status"><button type="submit">등록 <span aria-hidden="true">＋</span></button></div>
+              <p class="input-hint" id="tag-help">최대 20개 · 한 번에 하나씩 등록</p>
+              <p class="form-status" id="tag-status" role="status" aria-live="polite"></p>
+            </form>
+            <div class="tag-divider"></div>
+            <div class="tag-header"><strong>등록한 태그</strong><span>MY TAGS</span></div>
+            <p id="tag-empty" class="tags-empty">아직 등록한 태그가 없어요.<br>관심 있는 주제를 추가해 보세요.</p>
+            <ul id="tag-list" class="tag-list" aria-label="등록한 관심 태그"></ul>
+            <p class="storage-note"><span aria-hidden="true">✳</span> 태그는 현재 브라우저에만 저장돼요.</p>
+          </div>
+          <div class="custom-card">
+            <div class="card-heading"><div><span class="card-overline">02 / YOUR BRIEFING</span><h3>나만의 영상</h3></div><span class="soon-pill">연동 예정</span></div>
+            <p class="card-intro">등록한 태그에 맞는 뉴스 영상을 이곳에서 만나보세요.</p>
+            <div class="custom-empty"><div class="custom-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5" stroke="currentColor" stroke-width="1.4"/><path d="m10 9 5 3-5 3V9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></div><strong>아직 연결된 맞춤 영상이 없어요</strong><span>현재는 태그를 등록해도 영상이 생성되지 않아요.<br>뉴스 수집과 영상 생성 기능은 연동 전입니다.</span></div>
+            <p class="integration-note"><span></span> 디자인 시안 · 뉴스 수집 및 영상 생성 미연동</p>
+          </div>
+        </div>
+        <noscript><p>태그를 등록하려면 브라우저에서 JavaScript를 켜 주세요.</p></noscript>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="container footer-inner"><a class="footer-brand" href="#top">daily<span>.</span>brief</a><p>오늘의 뉴스를, 조금 더 가볍게.</p><span>LOCAL NEWS BRIEFING</span></div></footer>
+</body>
+</html>
