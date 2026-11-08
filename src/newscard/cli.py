@@ -167,6 +167,51 @@ def cmd_video() -> None:
     print(f"\n전체 {time.perf_counter() - t0:.1f}초")
 
 
+def cmd_run() -> None:
+    import argparse
+
+    from newscard import runner
+
+    ap = argparse.ArgumentParser(prog="newscard run", description="수집부터 영상까지 한 번에 실행합니다.")
+    ap.add_argument("--from", dest="start", help=f"이 단계부터 시작 ({', '.join(runner.STEP_NAMES)})")
+    ap.add_argument("--until", dest="end", help="이 단계까지만 실행")
+    ap.add_argument("--theme", choices=["light", "dark", "both"], default="both", help="카드/영상 모드 (기본: both)")
+    ap.add_argument("--strict", action="store_true", help="검토에서 문제가 나오면 멈춤")
+    ap.add_argument("--no-preflight", action="store_true", help="시작 전 점검을 건너뜀")
+    args = ap.parse_args(sys.argv[2:])
+    try:
+        names = runner.select_steps(args.start, args.end)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    ctx = runner.Context(themes=("light", "dark") if args.theme == "both" else (args.theme,), strict=args.strict)
+
+    print(f"실행할 단계: {' -> '.join(names)}\n")
+    if not args.no_preflight:
+        problems = runner.preflight(names)
+        if problems:
+            print("시작 전 점검에서 문제가 발견돼 실행하지 않았어요:\n")
+            for p in problems:
+                print(f"  - {p}")
+            raise SystemExit(1)
+        print("시작 전 점검 통과\n")
+
+    report = runner.run_pipeline(ctx, names)
+    path = runner.save_report(report)
+    print()
+    if report["warnings"]:
+        print(f"확인이 필요한 항목 {len(report['warnings'])}건:")
+        for w in report["warnings"]:
+            print(f"  ※ {w}")
+        print()
+    if report["ok"]:
+        print(f"모든 단계 완료 | 총 {runner.fmt_sec(report['total_sec'])} | 보고서 {path}")
+    else:
+        nxt = runner.STEP_NAMES[runner.STEP_NAMES.index(report["failed_step"])]
+        print(f"'{report['failed_step']}' 단계에서 멈췄어요 | 총 {runner.fmt_sec(report['total_sec'])}")
+        print(f"원인을 해결한 뒤 이어서 하려면: newscard run --from {nxt}")
+        raise SystemExit(1)
+
+
 def _print_script_check() -> None:
     from newscard import script_check
 
@@ -200,11 +245,12 @@ def _timing_line(summaries, total):  # 맨 아래 소요 시간 요약
     return f"\n전체 {total:.1f}초 | 성공 {len(done)}/{len(summaries)}건 | 평균 {avg:.1f}초 | 가장 느린 것 {slow.rank}위 {slow.elapsed_sec:.1f}초{load}"
 
 
-COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards, "tts": cmd_tts, "video": cmd_video}
+COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards, "tts": cmd_tts, "video": cmd_video, "run": cmd_run}
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    quiet = len(sys.argv) > 1 and sys.argv[1] == "run"  # 한 번에 실행할 때는 단계별 요약만 보이게 한다
+    logging.basicConfig(level=logging.WARNING if quiet else logging.INFO, format="%(levelname)s %(message)s")
     for noisy in ("httpx", "httpcore", "trafilatura", "courlan", "htmldate"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     name = sys.argv[1] if len(sys.argv) > 1 else "top"  # 인자가 없으면 기존처럼 Top 5 선정
