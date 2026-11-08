@@ -57,3 +57,22 @@ class Card(BaseModel):
     body: str
     narration: str
     source: str = ""
+
+
+class EventSummary(BaseModel):
+    """Top 사건 하나의 요약. 대본/카드 단계가 이 파일을 읽는다."""
+
+    rank: int  # TopEvent.rank
+    event_title: str  # 대표 기사 제목 (원본)
+    event_url: str
+    headline: str = ""  # 카드 제목 (LLM 생성)
+    summary: str = ""
+    key_points: list[str] = Field(default_factory=list)
+    sources: list[dict] = Field(default_factory=list)  # 요약에 실제로 쓴 기사 [{source, title, url}] (대표 기사)
+    also_reported_by: list[str] = Field(default_factory=list)  # 같은 사건으로 확인된 다른 언론사 (요약에는 미사용)
+    basis: str = "body"  # body(대표 기사 본문) | body_fallback(대표 기사 본문이 없어 같은 사건의 다른 기사 본문 사용) | title_only(제목만, 제한적)
+    input_chars: int = 0  # 모델에 준 본문 글자 수
+    truncated: bool = False  # 본문이 너무 길어 일부만 줬는지
+    model: str = ""
+    status: str = "ok"  # ok | failed
+    error: str = ""

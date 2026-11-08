@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from newscard.config import load_settings
 from newscard.pipeline import run
@@ -11,8 +12,7 @@ BASIS = {
 }
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+def cmd_top() -> None:
     settings = load_settings()
     events = run(settings)
 
@@ -26,6 +26,38 @@ def main() -> None:
         )
         for n in e.notes:
             print(f"   ※ {n}")
+
+
+def cmd_summarize() -> None:
+    from newscard.summarize import run as summarize_run
+
+    summaries = summarize_run()
+    print("\n요약 결과 (data/summaries.json)\n")
+    for s in summaries:
+        if s.status == "ok":
+            tag = {
+                "body": "",
+                "body_fallback": f" (대표 기사 본문이 없어 {s.sources[0]['source'] or '다른'} 기사로 요약)",
+                "title_only": " (제목만으로 요약, 제한적)",
+            }[s.basis]
+            print(f"{s.rank}. {s.headline}{tag}\n   {s.summary}")
+            for p in s.key_points:
+                print(f"   - {p}")
+        else:
+            print(f"{s.rank}. [요약 실패] {s.event_title}\n   {s.error}")
+
+
+COMMANDS = {"top": cmd_top, "summarize": cmd_summarize}
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    for noisy in ("httpx", "httpcore", "trafilatura", "courlan", "htmldate"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+    name = sys.argv[1] if len(sys.argv) > 1 else "top"  # 인자가 없으면 기존처럼 Top 5 선정
+    if name not in COMMANDS:
+        raise SystemExit(f"알 수 없는 명령: {name} (사용 가능: {', '.join(COMMANDS)})")
+    COMMANDS[name]()
 
 
 if __name__ == "__main__":

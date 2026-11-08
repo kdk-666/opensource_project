@@ -12,6 +12,7 @@ services:
       - ollama
     environment:
       OLLAMA_HOST: http://ollama:11434
+      NEWSCARD_MODEL: ${NEWSCARD_MODEL:-qwen2.5:3b}
     volumes:
       - ./src:/app/src
       - ./data:/app/data
