@@ -17,3 +17,5 @@ config.yaml
 .idea/
 .DS_Store
 config/settings.yaml
+
+config/pronunciations.yaml

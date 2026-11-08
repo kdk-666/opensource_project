@@ -126,6 +126,25 @@ def cmd_cards() -> None:
     print(f"\n전체 {time.perf_counter() - t0:.1f}초 (목록: data/cards.json)")
 
 
+def cmd_tts() -> None:
+    from newscard import tts
+
+    t0 = time.perf_counter()
+    items = tts.run()
+    print(f"\n나레이션 음성 {sum(1 for i in items if i['status'] == 'ok')}/{len(items)}장 -> data/audio/ (목록: data/audio.json)\n")
+    for i in items:
+        if i["status"] == "ok":
+            diff = i["duration_sec"] - i["est_sec"]
+            print(f"[{i['index']}] {i['duration_sec']:.1f}초 (대본 추정 {i['est_sec']}초, 차이 {diff:+.1f}초)  {i['audio']}")
+            print(f"     읽는 글: {i['spoken_text']}")
+        else:
+            print(f"[{i['index']}] 실패: {i['error']}")
+        for w in i["warnings"]:
+            print(f"     ※ {w}")
+    total = sum(i["duration_sec"] for i in items)
+    print(f"\n음성 길이 합계 {total:.1f}초 | 걸린 시간 {time.perf_counter() - t0:.1f}초")
+
+
 def _print_script_check() -> None:
     from newscard import script_check
 
@@ -159,7 +178,7 @@ def _timing_line(summaries, total):  # 맨 아래 소요 시간 요약
     return f"\n전체 {total:.1f}초 | 성공 {len(done)}/{len(summaries)}건 | 평균 {avg:.1f}초 | 가장 느린 것 {slow.rank}위 {slow.elapsed_sec:.1f}초{load}"
 
 
-COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards}
+COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards, "tts": cmd_tts}
 
 
 def main() -> None:

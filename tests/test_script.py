@@ -197,3 +197,42 @@ def test_rejection_reason_is_sent_back_to_the_model():
     first, second = (x["messages"][0]["content"] for x in c.calls)
     assert "거절된 이유" not in first
     assert "거절된 이유" in second and "끝나지 않음" in second
+
+
+# ---- 숫자 범위 표현 / 어색한 수량 표현 ----
+def range_summary():
+    s = summary()
+    s.headline = "초등 입학생 감소"
+    s.summary = "내년 초등학교 입학생이 30만 명 미만으로 줄어들 전망이다. 저출생의 영향이라고 교육부는 밝혔다."
+    s.key_points = ["입학생 30만 명 미만", "저출생 영향"]
+    return s
+
+
+def test_dropping_range_word_is_rejected():
+    s = range_summary()
+    bad = "내년 초등학교 입학 예정인 30만 명이 아래로 줄어들 것으로 예상됩니다. 교육부는 저출생의 영향이라고 밝혔습니다."
+    assert "미만" in check_narration(bad, s)
+    good = "내년 초등학교 입학생이 30만 명 미만으로 줄어들 전망입니다. 교육부는 저출생의 영향이라고 밝혔습니다."
+    assert check_narration(good, s) == ""
+
+
+def test_odd_quantity_particle_is_rejected_even_without_range_word():
+    s = range_summary()
+    odd = "내년 초등학교 입학생 30만 명이 아래로 줄어듭니다. 교육부는 저출생의 영향이라고 밝혔습니다. 미만이라는 설명입니다."
+    assert "어색" in check_narration(odd, s)
+
+
+def test_range_word_not_required_when_not_attached_to_number():
+    s = summary()
+    s.summary += " 이상 징후는 없다고 밝혔다."  # 숫자에 붙지 않은 '이상'은 범위 표현이 아니다
+    assert check_narration(GOOD_TEXT, s) == ""
+
+
+def test_rejection_feedback_names_the_missing_range_word():
+    s = range_summary()
+    bad = nar("내년 초등학교 입학생 30만 명이 줄어들 것으로 예상됩니다. 교육부는 저출생의 영향이라고 밝혔습니다.")
+    good = nar("내년 초등학교 입학생이 30만 명 미만으로 줄어들 전망입니다. 교육부는 저출생의 영향이라고 밝혔습니다.")
+    c = FakeClient([bad, good])
+    card = build_script([s], c, "m", PROMPT, today=TODAY)[1]
+    assert card.generated_by == "llm" and card.attempts == 2
+    assert "'미만'" in c.calls[1]["messages"][0]["content"]

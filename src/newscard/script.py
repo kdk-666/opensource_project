@@ -77,6 +77,10 @@ def grounding(narration: str, summary_text: str) -> float:
     return len(n & set(tokens(summary_text))) / len(n) if n else 0.0
 
 
+_RANGE = re.compile(r"\d[\d,.]*\s?(?:천|만|억|조)?\s?(?:명|개|건|곳|원|%|세대|채|배)?\s?(미만|이상|이하|초과)")
+_ODD_QUANTITY = re.compile(r"(명|개|건|곳|원|퍼센트|%|세대)(이|가|은|는)\s*(아래|위)(로|에)")
+
+
 def check_narration(narration: str, s: EventSummary) -> str:
     """나레이션이 쓸 만한지 코드로 검사한다. 문제가 없으면 빈 글자, 있으면 사유."""
     if re.search(r"[()\[\]{}<>]|https?://", narration):
@@ -91,6 +95,11 @@ def check_narration(narration: str, s: EventSummary) -> str:
     g = grounding(narration, source)
     if g < MIN_GROUNDING:
         return f"요약에 없는 단어가 많음(일치율 {g:.2f} < {MIN_GROUNDING})"
+    for word in dict.fromkeys(_RANGE.findall(source)):  # 숫자에 붙은 '미만/이상/이하/초과'는 뜻이 달라지므로 꼭 남겨야 한다
+        if word not in narration:
+            return f"요약의 숫자 범위 표현 '{word}'이(가) 나레이션에서 빠짐"
+    if _ODD_QUANTITY.search(narration):
+        return "수량 뒤 조사가 어색함(예: '30만 명이 아래로')"
     return ""
 
 
