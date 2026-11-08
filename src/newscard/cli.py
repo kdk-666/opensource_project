@@ -145,6 +145,28 @@ def cmd_tts() -> None:
     print(f"\n음성 길이 합계 {total:.1f}초 | 걸린 시간 {time.perf_counter() - t0:.1f}초")
 
 
+def cmd_video() -> None:
+    from newscard import video
+
+    arg = sys.argv[2] if len(sys.argv) > 2 else "both"
+    if arg not in ("both", "light", "dark"):
+        raise SystemExit("사용법: newscard video [light|dark|both]  (기본: both)")
+    themes = ("light", "dark") if arg == "both" else (arg,)
+    t0 = time.perf_counter()
+    results = video.run(themes=themes)
+    for theme, r in results.items():
+        label = {"light": "밝은 모드", "dark": "다크 모드"}[theme]
+        print(f"\n[{label}] {r['path']}")
+        print(f"  길이 {r['duration']:.1f}초 | {r['width']}x{r['height']} | {r['size'] / 1e6:.1f}MB | 코덱 {', '.join(r['codecs'])}")
+        for c in r["cards"]:
+            print(f"    [{c['index']}] {c['kind']:<6} {c['seconds']:.1f}초")
+        for n in r["notes"]:
+            print(f"  ※ {n}")
+        if abs(r["duration"] - r["expected"]) > 0.5:
+            print(f"  ※ 예상 길이({r['expected']}초)와 {abs(r['duration'] - r['expected']):.1f}초 차이가 나요")
+    print(f"\n전체 {time.perf_counter() - t0:.1f}초")
+
+
 def _print_script_check() -> None:
     from newscard import script_check
 
@@ -178,7 +200,7 @@ def _timing_line(summaries, total):  # 맨 아래 소요 시간 요약
     return f"\n전체 {total:.1f}초 | 성공 {len(done)}/{len(summaries)}건 | 평균 {avg:.1f}초 | 가장 느린 것 {slow.rank}위 {slow.elapsed_sec:.1f}초{load}"
 
 
-COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards, "tts": cmd_tts}
+COMMANDS = {"top": cmd_top, "summarize": cmd_summarize, "script": cmd_script, "verify": cmd_verify, "cards": cmd_cards, "tts": cmd_tts, "video": cmd_video}
 
 
 def main() -> None:
