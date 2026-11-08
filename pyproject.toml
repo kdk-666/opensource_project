@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Google News RSS to card-news video pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
 dependencies = [
     "feedparser",
     "trafilatura",
