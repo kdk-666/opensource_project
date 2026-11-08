@@ -16,3 +16,4 @@ config.yaml
 .vscode/
 .idea/
 .DS_Store
+config/settings.yaml

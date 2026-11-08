@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 dependencies = [
     "feedparser",
     "trafilatura",
+    "lxml_html_clean",
+    "googlenewsdecoder",
     "ollama",
     "Pillow",
     "pyyaml",

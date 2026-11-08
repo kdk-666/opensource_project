@@ -16,6 +16,7 @@ services:
       - ./src:/app/src
       - ./data:/app/data
       - ./prompts:/app/prompts
+      - ./config:/app/config
 
 volumes:
   ollama:
