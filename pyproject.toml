@@ -16,7 +16,7 @@ dependencies = [
     "trafilatura",
     "lxml_html_clean",
     "googlenewsdecoder",
-    "piper-tts",
+    "supertonic",
     "ollama",
     "Pillow",
     "pyyaml",

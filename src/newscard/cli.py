@@ -126,12 +126,43 @@ def cmd_cards() -> None:
     print(f"\n전체 {time.perf_counter() - t0:.1f}초 (목록: data/cards.json)")
 
 
+def _voice_arg(value: str) -> str:
+    import argparse
+
+    from newscard.tts import SUPERTONIC_VOICES
+
+    v = value.strip().upper()
+    if v not in SUPERTONIC_VOICES:
+        raise argparse.ArgumentTypeError(f"'{value}'은(는) 없는 목소리예요. 사용 가능: {', '.join(SUPERTONIC_VOICES)}")
+    return v
+
+
 def cmd_tts() -> None:
+    import argparse
+
     from newscard import tts
 
+    ap = argparse.ArgumentParser(prog="newscard tts", description="나레이션을 음성으로 만듭니다.")
+    ap.add_argument("action", nargs="?", choices=["samples"], help="samples: 10가지 목소리를 같은 문장으로 들어 보기")
+    ap.add_argument("--voice", type=_voice_arg, help="이번 실행의 목소리 (F1~F5 여성, M1~M5 남성). 기본: F2")
+    args = ap.parse_args(sys.argv[2:])
+
     t0 = time.perf_counter()
-    items = tts.run()
-    print(f"\n나레이션 음성 {sum(1 for i in items if i['status'] == 'ok')}/{len(items)}장 -> data/audio/ (목록: data/audio.json)\n")
+    if args.action == "samples":
+        results = tts.run_samples()
+        print("\n같은 문장을 10가지 목소리로 읽었어요 (data/voice_samples/). 들어 보고 마음에 드는 걸 고르세요.\n")
+        for r in results:
+            kind = "여성" if r["voice"].startswith("F") else "남성"
+            mark = "  <- 기본" if r["voice"] == tts.DEFAULT_VOICE else ""
+            print(f"  {r['voice']} ({kind})  {r['duration_sec']:.1f}초  {r['path']}{mark}" if not r["error"]
+                  else f"  {r['voice']} 실패: {r['error']}")
+        print("\n이번 한 번만 바꾸려면: newscard tts --voice M2   (전체 실행은 newscard run --voice M2)")
+        print(f"계속 쓰려면 .env 에 NEWSCARD_VOICE=M2 를 적으세요. (소요 {time.perf_counter() - t0:.1f}초)")
+        return
+
+    items = tts.run(voice=args.voice)
+    eng = f"{items[0].get('engine', '?')} / {items[0].get('voice', '?')}" if items else ""
+    print(f"\n나레이션 음성 {sum(1 for i in items if i['status'] == 'ok')}/{len(items)}장 [{eng}] -> data/audio/ (목록: data/audio.json)\n")
     for i in items:
         if i["status"] == "ok":
             diff = i["duration_sec"] - i["est_sec"]
@@ -143,6 +174,7 @@ def cmd_tts() -> None:
             print(f"     ※ {w}")
     total = sum(i["duration_sec"] for i in items)
     print(f"\n음성 길이 합계 {total:.1f}초 | 걸린 시간 {time.perf_counter() - t0:.1f}초")
+    print("목소리를 바꿔 다시 만들려면: newscard run --from tts --voice M2  (음성과 영상만 다시 만듭니다)")
 
 
 def cmd_video() -> None:
@@ -177,13 +209,15 @@ def cmd_run() -> None:
     ap.add_argument("--until", dest="end", help="이 단계까지만 실행")
     ap.add_argument("--theme", choices=["light", "dark", "both"], default="both", help="카드/영상 모드 (기본: both)")
     ap.add_argument("--strict", action="store_true", help="검토에서 문제가 나오면 멈춤")
+    ap.add_argument("--voice", type=_voice_arg, help="목소리 (F1~F5 여성, M1~M5 남성). 기본: F2")
     ap.add_argument("--no-preflight", action="store_true", help="시작 전 점검을 건너뜀")
     args = ap.parse_args(sys.argv[2:])
     try:
         names = runner.select_steps(args.start, args.end)
     except ValueError as e:
         raise SystemExit(str(e))
-    ctx = runner.Context(themes=("light", "dark") if args.theme == "both" else (args.theme,), strict=args.strict)
+    ctx = runner.Context(themes=("light", "dark") if args.theme == "both" else (args.theme,), strict=args.strict,
+                         voice=args.voice)
 
     print(f"실행할 단계: {' -> '.join(names)}\n")
     if not args.no_preflight:

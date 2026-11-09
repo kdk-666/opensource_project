@@ -1,6 +1,8 @@
-"""음성 단계 테스트. Piper 없이 가짜 합성 함수로 검증한다."""
+"""음성 단계 테스트. Supertonic 없이 가짜 합성 함수/가짜 TTS 객체로 검증한다."""
 import json
+import types
 import wave
+from pathlib import Path
 
 import pytest
 
@@ -115,65 +117,9 @@ def test_long_audio_gets_warning(tmp_path):
 
 
 # ---- 음성 모델 / run ----
-def test_ensure_voice_skips_download_when_present(tmp_path, monkeypatch):
-    (tmp_path / "v.onnx").write_bytes(b"x")
-    (tmp_path / "v.onnx.json").write_text("{}")
-    monkeypatch.setattr(tts.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("내려받으면 안 됨")))
-    assert tts.ensure_voice("v", str(tmp_path)) == tmp_path / "v.onnx"
-
-
-def test_ensure_voice_downloads_with_documented_command(tmp_path, monkeypatch):
-    seen = {}
-
-    class P:
-        returncode = 0
-        stdout = stderr = ""
-
-    def fake_run(cmd, **kw):
-        seen["cmd"] = cmd
-        (tmp_path / "v.onnx").write_bytes(b"x")
-        (tmp_path / "v.onnx.json").write_text("{}")
-        return P()
-
-    monkeypatch.setattr(tts.subprocess, "run", fake_run)
-    tts.ensure_voice("v", str(tmp_path))
-    assert seen["cmd"][1:] == ["-m", "piper.download_voices", "v", "--data-dir", str(tmp_path)]
-
-
-def test_ensure_voice_failure_message(tmp_path, monkeypatch):
-    class P:
-        returncode = 1
-        stdout = ""
-        stderr = "URLError: 연결 실패"
-
-    monkeypatch.setattr(tts.subprocess, "run", lambda *a, **k: P())
-    with pytest.raises(tts.VoiceMissing, match="인터넷"):
-        tts.ensure_voice("v", str(tmp_path))
-
-
 def test_run_requires_script(tmp_path):
     with pytest.raises(SystemExit, match="newscard script"):
         tts.run(str(tmp_path))
-
-
-def test_run_writes_audio_json(tmp_path, monkeypatch):
-    d = tmp_path / "data"
-    d.mkdir()
-    (d / "script.json").write_text(json.dumps([card(0, "intro", 0).model_dump(), card(1).model_dump()], ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(tts, "ensure_voice", lambda *a, **k: tmp_path / "v.onnx")
-    monkeypatch.setattr(tts, "make_synth", lambda model, scale=None: fake_synth())
-    items = tts.run(str(d))
-    saved = json.loads((d / "audio.json").read_text(encoding="utf-8"))
-    assert len(items) == len(saved) == 2 and (d / "audio" / "card_01_news_1.wav").exists()
-
-
-def test_run_voice_missing_exits_with_message(tmp_path, monkeypatch):
-    d = tmp_path / "data"
-    d.mkdir()
-    (d / "script.json").write_text(json.dumps([card().model_dump()], ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(tts, "ensure_voice", lambda *a, **k: (_ for _ in ()).throw(tts.VoiceMissing("받지 못했어요")))
-    with pytest.raises(SystemExit, match="받지 못했어요"):
-        tts.run(str(d))
 
 
 # ---- 영어 읽기 ----
@@ -209,3 +155,211 @@ def test_synthesize_cards_warns_about_unknown_english(tmp_path):
     items = tts.synthesize_cards([card(1, narration="Tesla가 SNS에서 화제가 됐습니다.")], fake_synth(), tmp_path / "a", {})
     assert items[0]["spoken_text"] == "Tesla가 에스엔에스에서 화제가 됐습니다."  # 빈 사전이어도 대문자 약어는 글자 이름대로
     assert any("Tesla" in w and "pronunciations.yaml" in w for w in items[0]["warnings"])
+
+
+# ---- 엔진/목소리 설정 ----
+def clear_env(monkeypatch):
+    for k in ("NEWSCARD_VOICE", "NEWSCARD_TTS_SPEED", "NEWSCARD_TTS_STEPS", "NEWSCARD_TTS_NORMALIZE"):
+        monkeypatch.delenv(k, raising=False)
+
+
+# ---- Supertonic (가짜 TTS 객체) ----
+class FakeProcessor:
+    def __init__(self, bad=""):
+        self.bad = set(bad)
+
+    def validate_text(self, text):
+        found = sorted(set(text) & self.bad)
+        return (not found, found)
+
+
+class FakeSupertonic:
+    """supertonic.TTS와 같은 모양의 가짜. 호출 기록을 남기고 글자 수에 비례한 길이의 WAV를 쓴다."""
+    instances = []
+
+    def __init__(self, model=None, model_dir=None, auto_download=None, bad="", fail=None):
+        if fail:
+            raise fail
+        self.args = dict(model=model, model_dir=model_dir, auto_download=auto_download)
+        self.model = types.SimpleNamespace(text_processor=FakeProcessor(bad))
+        self.calls, self.styles, self._last = [], [], 1.0
+        FakeSupertonic.instances.append(self)
+
+    def get_voice_style(self, name):
+        if name not in tts.SUPERTONIC_VOICES:
+            raise KeyError(name)
+        self.styles.append(name)
+        return ("style", name)
+
+    def synthesize(self, text, voice_style, lang=None, **kw):
+        self.calls.append(dict(text=text, style=voice_style, lang=lang, **kw))
+        self._last = max(0.5, len(text.replace(" ", "")) * 0.1)
+        return "wav", [self._last]
+
+    def save_audio(self, wav, path):
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(44100)
+            w.writeframes(b"\x00\x00" * int(self._last * 44100))
+
+
+def factory(**extra):
+    return lambda model=None, model_dir=None, auto_download=None: FakeSupertonic(model, model_dir, auto_download, **extra)
+
+
+def test_supertonic_loads_model_into_given_dir_and_uses_korean(tmp_path):
+    FakeSupertonic.instances.clear()
+    synth = tts.make_supertonic_synth(tmp_path / "m", "M2", speed=1.1, steps=12, tts_factory=factory())
+    out = tmp_path / "a.wav"
+    synth("안녕하세요 뉴스입니다.", out)
+    t = FakeSupertonic.instances[0]
+    assert t.args == dict(model="supertonic-3", model_dir=str(tmp_path / "m"), auto_download=True)
+    call = t.calls[0]
+    assert call["lang"] == "ko" and call["style"] == ("style", "M2") and call["speed"] == 1.1 and call["total_steps"] == 12
+    assert out.exists() and tts.wav_seconds(out) > 0.4
+
+
+def test_supertonic_options_are_omitted_when_not_set(tmp_path):
+    FakeSupertonic.instances.clear()
+    tts.make_supertonic_synth(tmp_path, "F1", tts_factory=factory())("문장입니다.", tmp_path / "a.wav")
+    assert set(FakeSupertonic.instances[0].calls[0]) == {"text", "style", "lang"}  # 속도/단계는 라이브러리 기본값 사용
+
+
+def test_unsupported_characters_are_dropped_not_fatal(tmp_path):
+    FakeSupertonic.instances.clear()
+    synth = tts.make_supertonic_synth(tmp_path, "F1", tts_factory=factory(bad="★"))
+    synth("속보 ★ 발생했습니다", tmp_path / "a.wav")
+    assert FakeSupertonic.instances[0].calls[0]["text"] == "속보 발생했습니다"
+    with pytest.raises(ValueError, match="읽을 수 있는 글자가 없음"):
+        synth("★★", tmp_path / "b.wav")
+    assert tts.drop_unsupported("ok", FakeProcessor()) == ("ok", [])
+
+
+def test_supertonic_load_and_voice_errors_are_clear(tmp_path):
+    with pytest.raises(tts.VoiceMissing, match="인터넷"):
+        tts.make_supertonic_synth(tmp_path, "F1", tts_factory=factory(fail=OSError("연결 실패")))
+    t = FakeSupertonic()
+    with pytest.raises(tts.VoiceMissing, match="목소리"):
+        tts.supertonic_synth(t, "Z9")
+
+
+def test_run_passes_speed_steps_and_model_dir(tmp_path, monkeypatch):
+    clear_env(monkeypatch)
+    monkeypatch.setenv("NEWSCARD_VOICE", "M4")
+    monkeypatch.setenv("NEWSCARD_TTS_SPEED", "1.0")
+    seen = {}
+
+    def fake_make(model_dir, voice, speed=None, steps=None, tts_factory=None):
+        seen.update(model_dir=model_dir, voice=voice, speed=speed, steps=steps)
+        return fake_synth()
+
+    monkeypatch.setattr(tts, "make_supertonic_synth", fake_make)
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "script.json").write_text(json.dumps([card(1).model_dump()], ensure_ascii=False), encoding="utf-8")
+    items = tts.run(str(d))
+    assert seen == dict(model_dir=d / "voices" / "supertonic3", voice="M4", speed=1.0, steps=None)
+    assert items[0]["engine"] == "supertonic-3" and items[0]["voice"] == "M4"
+
+
+def test_run_bad_settings_exit_with_message(tmp_path, monkeypatch):
+    clear_env(monkeypatch)
+    monkeypatch.setenv("NEWSCARD_VOICE", "ko_KR-kss-medium")
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "script.json").write_text(json.dumps([card(1).model_dump()], ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(SystemExit, match="newscard tts samples"):
+        tts.run(str(d))
+    monkeypatch.delenv("NEWSCARD_VOICE")
+    with pytest.raises(SystemExit, match="newscard tts samples"):  # 직접 지정한 목소리가 틀려도 같은 안내
+        tts.run(str(d), voice="Q1")
+
+
+def test_normalize_off_sends_text_as_is(tmp_path, monkeypatch):
+    clear_env(monkeypatch)
+    monkeypatch.setenv("NEWSCARD_TTS_NORMALIZE", "off")
+    sent = []
+    monkeypatch.setattr(tts, "make_supertonic_synth", lambda *a, **k: (lambda text, path: (sent.append(text), fake_synth()(text, path))))
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "script.json").write_text(json.dumps([card(1, narration="SNS에서 9천 세대가 화제입니다.").model_dump()], ensure_ascii=False), encoding="utf-8")
+    tts.run(str(d))
+    assert sent == ["SNS에서 9천 세대가 화제입니다."]  # 한글 변환 없이 원문 그대로 (엔진이 직접 읽는지 비교할 때 사용)
+
+
+def test_voice_samples_for_all_ten_voices(tmp_path):
+    FakeSupertonic.instances.clear()
+    res = tts.run_samples(str(tmp_path), tts_factory=factory())
+    assert [r["voice"] for r in res] == tts.SUPERTONIC_VOICES and all(not r["error"] for r in res)
+    assert len(FakeSupertonic.instances) == 1  # 모델은 한 번만 불러온다
+    assert all((tmp_path / "voice_samples" / f"{v}.wav").exists() for v in tts.SUPERTONIC_VOICES)
+    assert "구천" in FakeSupertonic.instances[0].calls[0]["text"]  # 숫자 읽기 변환이 적용된 문장
+
+
+def test_missing_supertonic_package_gives_rebuild_hint(tmp_path, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "supertonic":
+            raise ModuleNotFoundError("No module named 'supertonic'")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(tts.VoiceMissing, match="docker compose build"):
+        tts.load_supertonic(tmp_path)
+    with pytest.raises(SystemExit, match="docker compose build"):  # samples 명령도 같은 안내를 한다
+        tts.run_samples(str(tmp_path))
+
+
+# ---- 목소리 선택 (기본 F2, 바꿀 수 있음) ----
+def test_default_voice_is_f2(monkeypatch):
+    clear_env(monkeypatch)
+    assert tts.DEFAULT_VOICE == "F2" and tts.voice_name() == "F2"
+
+
+def test_voice_priority_argument_over_env_over_default(monkeypatch):
+    clear_env(monkeypatch)
+    monkeypatch.setenv("NEWSCARD_VOICE", "M3")
+    assert tts.voice_name() == "M3"                # .env 설정
+    assert tts.voice_name("m5") == "M5"            # 직접 지정(--voice)이 우선, 대소문자 무관
+    monkeypatch.setenv("NEWSCARD_VOICE", "")       # docker compose가 빈 값으로 넘겨도 '설정 안 함'
+    assert tts.voice_name() == "F2"
+
+
+def test_voice_and_number_validation(monkeypatch):
+    clear_env(monkeypatch)
+    with pytest.raises(ValueError, match="newscard tts samples"):
+        tts.voice_name("Z9")
+    monkeypatch.setenv("NEWSCARD_VOICE", "ko_KR-kss-medium")  # 예전(Piper) 설정이 남아 있는 경우
+    with pytest.raises(ValueError, match="사용 가능: F1"):
+        tts.voice_name()
+    monkeypatch.setenv("NEWSCARD_TTS_SPEED", "빠르게")
+    with pytest.raises(ValueError, match="숫자"):
+        tts._float_env("NEWSCARD_TTS_SPEED")
+    assert set(tts.SUPERTONIC_VOICES) == {f"{g}{n}" for g in "FM" for n in range(1, 6)}
+
+
+def test_run_uses_voice_argument_and_records_it(tmp_path, monkeypatch):
+    clear_env(monkeypatch)
+    monkeypatch.setenv("NEWSCARD_VOICE", "M4")
+    seen = []
+    monkeypatch.setattr(tts, "make_supertonic_synth", lambda model_dir, voice, speed=None, steps=None, tts_factory=None: (seen.append(voice), fake_synth())[1])
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "script.json").write_text(json.dumps([card(1).model_dump()], ensure_ascii=False), encoding="utf-8")
+    assert tts.run(str(d))[0]["voice"] == "M4"            # 환경변수
+    assert tts.run(str(d), voice="f1")[0]["voice"] == "F1"  # 이번 한 번만 바꾸기
+    assert seen == ["M4", "F1"]
+    assert json.loads((d / "audio.json").read_text(encoding="utf-8"))[0]["voice"] == "F1"  # 마지막 실행 기준으로 기록
+
+
+def test_changing_voice_regenerates_audio_files(tmp_path, monkeypatch):
+    clear_env(monkeypatch)
+    sizes = {}
+    monkeypatch.setattr(tts, "make_supertonic_synth", lambda model_dir, voice, speed=None, steps=None: fake_synth(seconds_per_char=0.1 if voice == "F2" else 0.2))
+    d = tmp_path / "data"
+    d.mkdir()
+    (d / "script.json").write_text(json.dumps([card(1).model_dump()], ensure_ascii=False), encoding="utf-8")
+    for v in ("F2", "M2"):
+        sizes[v] = tts.run(str(d), voice=v)[0]["duration_sec"]
+    assert sizes["M2"] > sizes["F2"]  # 두 번째 실행이 첫 번째 파일을 새 목소리로 덮어썼다

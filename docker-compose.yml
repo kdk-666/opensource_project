@@ -14,6 +14,11 @@ services:
       OLLAMA_HOST: http://ollama:11434
       NEWSCARD_MODEL: ${NEWSCARD_MODEL:-qwen2.5:3b}
       NEWSCARD_VERIFY_MODEL: ${NEWSCARD_VERIFY_MODEL:-llama3.2:3b}
+      # 음성 설정: .env 에 적으면 적용됩니다 (비어 있으면 기본값)
+      NEWSCARD_VOICE: ${NEWSCARD_VOICE:-}
+      NEWSCARD_TTS_SPEED: ${NEWSCARD_TTS_SPEED:-}
+      NEWSCARD_TTS_STEPS: ${NEWSCARD_TTS_STEPS:-}
+      NEWSCARD_TTS_NORMALIZE: ${NEWSCARD_TTS_NORMALIZE:-}
     volumes:
       - ./src:/app/src
       - ./data:/app/data

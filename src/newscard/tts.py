@@ -1,6 +1,8 @@
-"""대본(script.json)의 나레이션을 음성(WAV)으로 만든다. Piper(piper1-gpl)를 사용한다.
+"""대본(script.json)의 나레이션을 음성(WAV)으로 만든다.
 
-- 한국어 음성: ko_KR-kss-medium (단일 화자, 22.05kHz). 처음 한 번 data/voices/ 로 내려받는다.
+- 음성 엔진: Supertonic 3 (ONNX, CPU에서 실행). 목소리 F1~F5(여), M1~M5(남) 중 선택하며 기본은 F2.
+  처음 한 번 data/voices/ 로 모델(약 400MB)을 내려받는다.
+- 목소리는 NEWSCARD_VOICE 환경변수나 `newscard tts --voice M2` 로 바꿀 수 있다.
 - 숫자/날짜/단위는 읽는 방식 그대로 한글로 바꿔서(normalize_for_tts) 음성 엔진에 준다. ("11월 8일" -> "십일월 팔일")
 - 카드마다 data/audio/card_00_intro.wav 를 만들고, 실제 음성 길이를 data/audio.json 에 기록한다.
   영상 단계는 이 실제 길이로 카드 표시 시간을 정한다. (대본의 est_sec는 글자 수 기반 추정일 뿐)
@@ -9,8 +11,6 @@ import json
 import logging
 import os
 import re
-import subprocess
-import sys
 import wave
 from pathlib import Path
 from typing import Callable
@@ -19,8 +19,6 @@ from newscard.models import ScriptCard
 
 log = logging.getLogger(__name__)
 
-VOICE = os.environ.get("NEWSCARD_VOICE", "ko_KR-kss-medium")
-VOICE_DIR = "data/voices"
 MAX_CARD_SEC = 35.0  # 카드 한 장의 음성이 이보다 길면 알림
 
 # ---------------------------------------------------------------- 숫자 읽기
@@ -159,47 +157,109 @@ def normalize_for_tts(text: str, table: dict[str, str] | None = None, unknown: l
     return re.sub(r"\s+", " ", "".join(out)).strip()
 
 
-# ---------------------------------------------------------------- 음성 엔진
+# ---------------------------------------------------------------- 음성 엔진 (Supertonic 3)
 Synth = Callable[[str, Path], None]  # (읽을 글, 저장할 wav 경로). 테스트에서는 가짜 함수를 넣는다.
+
+SUPERTONIC_MODEL = "supertonic-3"
+SUPERTONIC_VOICES = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"]  # 여성 5, 남성 5
+DEFAULT_VOICE = "F2"
+SAMPLE_TEXT = "오늘의 주요 뉴스를 전해드립니다. 서울 마곡동에서 열수송관이 터져 약 구천 세대의 난방과 온수가 끊겼습니다."
 
 
 class VoiceMissing(RuntimeError):
     pass
 
 
-def voice_file(voice: str = VOICE, voice_dir: str = VOICE_DIR) -> Path:
-    return Path(voice_dir) / f"{voice}.onnx"
+def _env(name: str) -> str:
+    """환경변수를 읽는다. docker compose가 빈 값("")으로 넘겨도 '설정 안 함'으로 본다."""
+    return (os.environ.get(name) or "").strip()
 
 
-def ensure_voice(voice: str = VOICE, voice_dir: str = VOICE_DIR) -> Path:
-    """음성 모델이 없으면 내려받는다. 실패하면 이유를 알려 준다."""
-    path = voice_file(voice, voice_dir)
-    if path.exists() and Path(str(path) + ".json").exists():
-        return path
-    log.info("음성 모델을 내려받는 중: %s (약 60MB, 처음 한 번)", voice)
-    proc = subprocess.run(
-        [sys.executable, "-m", "piper.download_voices", voice, "--data-dir", voice_dir],
-        capture_output=True, text=True,
-    )
-    if proc.returncode != 0 or not path.exists():
-        raise VoiceMissing(
-            f"음성 모델({voice})을 내려받지 못했어요. 인터넷 연결을 확인하세요.\n{(proc.stderr or proc.stdout)[-300:]}"
+def voice_name(voice: str | None = None) -> str:
+    """쓸 목소리. 우선순위: 직접 지정(--voice) > NEWSCARD_VOICE > 기본값(F2). 대소문자는 구분하지 않는다."""
+    chosen = (voice or _env("NEWSCARD_VOICE") or DEFAULT_VOICE).strip().upper()
+    if chosen not in SUPERTONIC_VOICES:
+        raise ValueError(
+            f"목소리 '{chosen}'은(는) 사용할 수 없어요. 사용 가능: {', '.join(SUPERTONIC_VOICES)} "
+            f"(`newscard tts samples`로 들어 볼 수 있어요)"
         )
-    return path
+    return chosen
 
 
-def make_synth(model_path: Path, length_scale: float | None = None) -> Synth:
-    """Piper 음성을 한 번만 불러와서 쓰는 합성 함수. length_scale이 클수록 천천히 읽는다(기본 1.0)."""
-    from piper import PiperVoice, SynthesisConfig  # 무거운 라이브러리라 필요할 때만 불러온다
+def _float_env(name: str) -> float | None:
+    raw = _env(name)
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{name}={raw} 은(는) 숫자가 아니에요.")
 
-    voice = PiperVoice.load(model_path)
-    config = SynthesisConfig(length_scale=length_scale) if length_scale else None
+
+def drop_unsupported(text: str, processor) -> tuple[str, list[str]]:
+    """모델이 읽지 못하는 글자를 뺀다. (빠진 글자 목록도 돌려준다)"""
+    ok, bad = processor.validate_text(text)
+    if ok:
+        return text, []
+    cleaned = "".join(c for c in text if c not in set(bad))
+    return re.sub(r"\s+", " ", cleaned).strip(), list(bad)
+
+
+def load_supertonic(model_dir: Path, tts_factory=None):
+    """Supertonic 3 모델을 불러온다. 없으면 model_dir로 내려받는다(약 400MB, 처음 한 번)."""
+    if tts_factory is None:
+        try:
+            from supertonic import TTS as tts_factory  # 무거운 라이브러리라 필요할 때만 불러온다
+        except ImportError as e:
+            raise VoiceMissing(
+                "supertonic 패키지가 설치돼 있지 않아요. Docker 이미지를 다시 만들어야 해요: `docker compose build`\n"
+                f"(내 PC에서 직접 실행한다면 `pip install -e \".[dev]\"`)  원인: {e}"
+            )
+    log.info("Supertonic 3 모델 준비 중... (처음에는 약 400MB를 내려받아요)")
+    try:
+        return tts_factory(model=SUPERTONIC_MODEL, model_dir=str(model_dir), auto_download=True)
+    except Exception as e:
+        raise VoiceMissing(
+            f"Supertonic 모델을 준비하지 못했어요. 인터넷 연결과 디스크 공간(약 400MB)을 확인하세요.\n{type(e).__name__}: {e}"
+        )
+
+
+def supertonic_synth(tts, voice: str, speed: float | None = None, steps: int | None = None, lang: str = "ko") -> Synth:
+    try:
+        style = tts.get_voice_style(voice)
+    except Exception as e:
+        raise VoiceMissing(f"목소리 '{voice}'를 불러오지 못했어요: {type(e).__name__}: {e}")
+    options = {}
+    if speed:
+        options["speed"] = speed
+    if steps:
+        options["total_steps"] = steps
 
     def synth(text: str, path: Path) -> None:
-        with wave.open(str(path), "wb") as wav:
-            voice.synthesize_wav(text, wav, syn_config=config)
+        cleaned, dropped = drop_unsupported(text, tts.model.text_processor)
+        if dropped:
+            log.warning("모델이 읽지 못하는 글자를 뺐어요: %s", "".join(dropped))
+        if not cleaned:
+            raise ValueError("읽을 수 있는 글자가 없음")
+        wav, _ = tts.synthesize(cleaned, voice_style=style, lang=lang, **options)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tts.save_audio(wav, str(path))
 
     return synth
+
+
+def make_supertonic_synth(model_dir: Path, voice: str, speed: float | None = None, steps: int | None = None,
+                          tts_factory=None) -> Synth:
+    return supertonic_synth(load_supertonic(model_dir, tts_factory), voice, speed, steps)
+
+
+def build_synth(voice: str, data_dir: str) -> Synth:
+    """환경변수(속도, 합성 단계)와 고른 목소리로 합성 함수를 만든다."""
+    steps = _env("NEWSCARD_TTS_STEPS")
+    return make_supertonic_synth(
+        Path(data_dir) / "voices" / "supertonic3", voice, _float_env("NEWSCARD_TTS_SPEED"),
+        int(steps) if steps else None,
+    )
 
 
 def wav_seconds(path: Path) -> float:
@@ -209,7 +269,7 @@ def wav_seconds(path: Path) -> float:
 
 # ---------------------------------------------------------------- 카드별 음성
 def synthesize_cards(cards: list[ScriptCard], synth: Synth, out_dir: Path,
-                     pronunciations: dict[str, str] | None = None) -> list[dict]:
+                     pronunciations: dict[str, str] | None = None, normalize: bool = True) -> list[dict]:
     """카드마다 음성 파일을 만든다. 한 카드가 실패해도 나머지는 계속한다."""
     table = pronunciations if pronunciations is not None else load_pronunciations()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -220,7 +280,7 @@ def synthesize_cards(cards: list[ScriptCard], synth: Synth, out_dir: Path,
         suffix = f"_{c.rank}" if c.kind == "news" else ""
         path = out_dir / f"card_{c.index:02d}_{c.kind}{suffix}.wav"
         unknown: list[str] = []
-        spoken = normalize_for_tts(c.narration, table, unknown)
+        spoken = normalize_for_tts(c.narration, table, unknown) if normalize else re.sub(r"\s+", " ", c.narration).strip()
         item = {"index": c.index, "kind": c.kind, "rank": c.rank, "audio": str(path).replace("\\", "/"),
                 "narration": c.narration, "spoken_text": spoken, "est_sec": c.est_sec,
                 "duration_sec": 0.0, "status": "ok", "error": "",
@@ -242,7 +302,8 @@ def synthesize_cards(cards: list[ScriptCard], synth: Synth, out_dir: Path,
     return items
 
 
-def run(data_dir: str = "data") -> list[dict]:
+def run(data_dir: str = "data", voice: str | None = None) -> list[dict]:
+    """나레이션을 음성으로 만든다. voice로 이번 실행의 목소리를 바꿀 수 있다 (예: "M2")."""
     src = Path(data_dir) / "script.json"
     if not src.exists():
         raise SystemExit("data/script.json 이 없어요. 먼저 `newscard script`를 실행하세요.")
@@ -250,11 +311,34 @@ def run(data_dir: str = "data") -> list[dict]:
     if not cards:
         raise SystemExit("대본이 비어 있어요.")
     try:
-        model = ensure_voice(VOICE, str(Path(data_dir) / "voices"))
-    except VoiceMissing as e:
+        chosen = voice_name(voice)
+        synth = build_synth(chosen, data_dir)
+    except (VoiceMissing, ValueError) as e:
         raise SystemExit(str(e))
-    scale = os.environ.get("NEWSCARD_TTS_LENGTH_SCALE")
-    synth = make_synth(model, float(scale) if scale else None)
-    items = synthesize_cards(cards, synth, Path(data_dir) / "audio")
+    normalize = _env("NEWSCARD_TTS_NORMALIZE").lower() not in ("off", "0", "false", "no")
+    items = synthesize_cards(cards, synth, Path(data_dir) / "audio", normalize=normalize)
+    for i in items:
+        i.update(engine=SUPERTONIC_MODEL, voice=chosen)
     (Path(data_dir) / "audio.json").write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
     return items
+
+
+def run_samples(data_dir: str = "data", tts_factory=None) -> list[dict]:
+    """Supertonic의 10가지 목소리로 같은 문장을 읽어서 data/voice_samples/ 에 저장한다. (목소리를 고를 때 사용)"""
+    out = Path(data_dir) / "voice_samples"
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        tts = load_supertonic(Path(data_dir) / "voices" / "supertonic3", tts_factory)
+    except VoiceMissing as e:
+        raise SystemExit(str(e))
+    text = normalize_for_tts(SAMPLE_TEXT)
+    steps = _env("NEWSCARD_TTS_STEPS")
+    results = []
+    for v in SUPERTONIC_VOICES:
+        path = out / f"{v}.wav"
+        try:
+            supertonic_synth(tts, v, _float_env("NEWSCARD_TTS_SPEED"), int(steps) if steps else None)(text, path)
+            results.append({"voice": v, "path": str(path).replace("\\", "/"), "duration_sec": wav_seconds(path), "error": ""})
+        except Exception as e:
+            results.append({"voice": v, "path": "", "duration_sec": 0.0, "error": f"{type(e).__name__}: {e}"})
+    return results

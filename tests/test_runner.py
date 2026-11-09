@@ -128,12 +128,12 @@ def test_step_script_and_tts_failure_rules(monkeypatch):
     _install(monkeypatch, script, lambda: [])
     with pytest.raises(R.StepError, match="대본"):
         R.step_script(R.Context())
-    _install(monkeypatch, tts, lambda: [{"index": 0, "status": "failed", "error": "엔진 오류", "duration_sec": 0, "warnings": []}])
+    _install(monkeypatch, tts, lambda voice=None: [{"index": 0, "status": "failed", "error": "엔진 오류", "duration_sec": 0, "warnings": []}])
     with pytest.raises(R.StepError, match="하나도"):
         R.step_tts(R.Context())
     items = [{"index": 0, "status": "ok", "error": "", "duration_sec": 5.0, "warnings": ["영어 'Tesla'..."]},
              {"index": 1, "status": "failed", "error": "x", "duration_sec": 0, "warnings": []}]
-    _install(monkeypatch, tts, lambda: items)
+    _install(monkeypatch, tts, lambda voice=None: items)
     res = R.step_tts(R.Context())
     assert "1/2" in res.summary and len(res.warnings) == 2
 
@@ -177,8 +177,21 @@ def test_preflight_reports_every_problem_at_once(monkeypatch):
     problems = R.preflight(R.STEP_NAMES)
     text = "\n".join(problems)
     assert len(problems) == 4
-    for key in ("Ollama", "한글 폰트", "FFmpeg", "Piper"):
+    for key in ("Ollama", "한글 폰트", "FFmpeg", "Supertonic"):
         assert key in text
+
+
+def test_preflight_checks_supertonic_and_voice(monkeypatch):
+    monkeypatch.delenv("NEWSCARD_VOICE", raising=False)
+    monkeypatch.setattr(R.importlib.util, "find_spec", lambda n: object())
+    assert R.preflight(["tts"]) == []
+    monkeypatch.setattr(R.importlib.util, "find_spec", lambda n: None if n == "supertonic" else object())
+    assert "Supertonic" in R.preflight(["tts"])[0]
+    monkeypatch.setattr(R.importlib.util, "find_spec", lambda n: object())
+    monkeypatch.setenv("NEWSCARD_VOICE", "ko_KR-kss-medium")  # 예전 목소리 설정이 남아 있는 경우
+    assert "사용할 수 없어요" in R.preflight(["tts"])[0]
+    monkeypatch.setenv("NEWSCARD_VOICE", "m2")  # 소문자도 허용
+    assert R.preflight(["tts"]) == []
 
 
 def test_preflight_model_missing_and_only_needed_steps_checked(monkeypatch):
@@ -231,3 +244,31 @@ def test_cli_from_until_theme_and_bad_arguments(monkeypatch, capsys):
     assert code == 0 and log == ["cards", "tts"] and "cards -> tts" in out
     code, out = run_cli(monkeypatch, capsys, ["--from", "xx"], fake_steps([]))
     assert code != 0
+
+
+def test_step_tts_passes_the_chosen_voice(monkeypatch):
+    from newscard import tts
+
+    seen = []
+
+    def fake(voice=None):
+        seen.append(voice)
+        return [{"index": 0, "status": "ok", "error": "", "duration_sec": 3.0, "warnings": [], "voice": voice or "F2"}]
+
+    _install(monkeypatch, tts, fake)
+    res = R.step_tts(R.Context(voice="M2"))
+    R.step_tts(R.Context())
+    assert seen == ["M2", None] and "M2" in res.summary
+
+
+def test_cli_run_voice_option_reaches_the_steps_and_validates(monkeypatch, capsys):
+    got = {}
+
+    def steps():
+        out = fake_steps([])
+        return [(n, (lambda ctx, f=f: (got.update(voice=ctx.voice), f(ctx))[1])) for n, f in out]
+
+    code, text = run_cli(monkeypatch, capsys, ["--from", "tts", "--until", "tts", "--voice", "m3"], steps())
+    assert code == 0 and got["voice"] == "M3"           # 소문자도 허용, 대문자로 정리
+    code, text = run_cli(monkeypatch, capsys, ["--voice", "Z9"], fake_steps([]))
+    assert code != 0                                       # 없는 목소리는 시작 전에 거절

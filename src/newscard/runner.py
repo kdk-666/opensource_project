@@ -1,7 +1,7 @@
 """수집부터 영상까지 한 번에 실행한다: newscard run
 
 순서: top -> summarize -> verify -> script -> check -> cards -> tts -> video
-- 시작 전에 필요한 것(Ollama와 모델, 한글 폰트, FFmpeg, Piper)을 한꺼번에 점검해서, 10분 돌리고 나서야 실패하는 일을 막는다.
+- 시작 전에 필요한 것(Ollama와 모델, 한글 폰트, FFmpeg, 음성 엔진)을 한꺼번에 점검해서, 10분 돌리고 나서야 실패하는 일을 막는다.
 - 단계가 실패하면 거기서 멈추고, 어디서부터 다시 하면 되는지 알려 준다. (--from 단계이름)
 - 검토에서 문제가 발견돼도 기본은 계속 진행하고 마지막에 경고로 모아 보여 준다. --strict면 문제가 있을 때 멈춘다.
 - 결과 요약은 data/run_report.json에 저장한다.
@@ -28,6 +28,7 @@ class Context:
     themes: tuple[str, ...] = ("light", "dark")
     strict: bool = False
     data_dir: str = "data"
+    voice: str | None = None  # 이번 실행의 목소리 (None이면 NEWSCARD_VOICE 또는 기본 F2)
 
 
 @dataclass
@@ -109,14 +110,15 @@ def step_cards(ctx: Context) -> StepResult:
 def step_tts(ctx: Context) -> StepResult:
     from newscard.tts import run
 
-    items = run()
+    items = run(voice=ctx.voice)
     ok = [i for i in items if i["status"] == "ok"]
     if not ok:
         raise StepError("나레이션 음성을 하나도 만들지 못했어요: " + (items[0]["error"] if items else ""))
     warns = [f"[{i['index']}] 음성 실패: {i['error']}" for i in items if i["status"] != "ok"]
     warns += [f"[{i['index']}] {w}" for i in ok for w in i["warnings"]]
     total = sum(i["duration_sec"] for i in ok)
-    return StepResult(f"음성 {len(ok)}/{len(items)}장, 합계 {total:.0f}초", warns)
+    voice = items[0].get("voice", "?") if items else "?"
+    return StepResult(f"음성 {len(ok)}/{len(items)}장 (목소리 {voice}), 합계 {total:.0f}초", warns)
 
 
 def step_video(ctx: Context) -> StepResult:
@@ -168,8 +170,15 @@ def preflight(names: list[str]) -> list[str]:
             problems.append(str(e))
     if "video" in names and not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
         problems.append("FFmpeg를 찾지 못했어요. Docker 이미지에 포함돼 있어요.")
-    if "tts" in names and importlib.util.find_spec("piper") is None:
-        problems.append("Piper(piper-tts)가 설치돼 있지 않아요. `docker compose build`로 이미지를 다시 만드세요.")
+    if "tts" in names:
+        from newscard.tts import voice_name
+
+        try:
+            voice_name()
+        except ValueError as e:
+            problems.append(str(e))
+        if importlib.util.find_spec("supertonic") is None:
+            problems.append("Supertonic(supertonic)이 설치돼 있지 않아요. `docker compose build`로 이미지를 다시 만드세요.")
     return problems
 
 
